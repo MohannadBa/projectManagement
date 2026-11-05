@@ -1,0 +1,231 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Bannaa construction project management platform (Alrasiyat) — static site on CloudFront, Cognito sign-in, Lambda API, DynamoDB, S3, SES, Anthropic API.
+
+Parameters:
+  OwnerEmail:
+    Type: String
+    Description: Email of the platform owner (full access, can set the company email domain).
+  SenderEmail:
+    Type: String
+    Description: Verified SES sender address for invitation emails (e.g. no-reply@alrasiyat.com).
+  AnthropicSecretName:
+    Type: String
+    Default: bannaa/anthropic
+    Description: Secrets Manager secret holding the Anthropic API key (plain string).
+  Model:
+    Type: String
+    Default: claude-sonnet-4-5
+    Description: Anthropic model id for invoice reading.
+  ModelComplex:
+    Type: String
+    Default: claude-sonnet-4-5
+    Description: Anthropic model id for reading drawings.
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      SSESpecification: { SSEEnabled: true }
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption: { ServerSideEncryptionConfiguration: [ { ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 } } ] }
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption: { ServerSideEncryptionConfiguration: [ { ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 } } ] }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - { Id: tmp-ai-images, Status: Enabled, Prefix: _tmp/, ExpirationInDays: 1 }
+
+  OAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Bannaa platform
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref OAC
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: assets
+            DomainName: !GetAtt AssetsBucket.RegionalDomainName
+            OriginAccessControlId: !Ref OAC
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: api
+            DomainName: !Sub '${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [ TLSv1.2 ] }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # Managed-CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [ GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE ]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad   # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac   # Managed-AllViewerExceptHostHeader
+          - PathPattern: /_blob/*
+            TargetOriginId: assets
+            ViewerProtocolPolicy: https-only
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition: { StringEquals: { 'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}' } }
+
+  AssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AssetsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${AssetsBucket.Arn}/_blob/*'
+            Condition: { StringEquals: { 'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}' } }
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: [ { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole } ]
+      ManagedPolicyArns: [ arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole ]
+      Policies:
+        - PolicyName: bannaa-api
+          PolicyDocument:
+            Statement:
+              - { Effect: Allow, Action: [ dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query ], Resource: !GetAtt Table.Arn }
+              - { Effect: Allow, Action: [ s3:GetObject, s3:PutObject ], Resource: !Sub '${AssetsBucket.Arn}/*' }
+              - { Effect: Allow, Action: [ ses:SendEmail ], Resource: '*' }
+              - { Effect: Allow, Action: [ secretsmanager:GetSecretValue ], Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AnthropicSecretName}-*' }
+              - { Effect: Allow, Action: [ cognito-idp:AdminCreateUser, cognito-idp:AdminSetUserPassword, cognito-idp:AdminGetUser, cognito-idp:AdminEnableUser, cognito-idp:AdminDisableUser, cognito-idp:AdminResetUserPassword, cognito-idp:ListUsers ], Resource: !GetAtt UserPool.Arn }
+              - { Effect: Allow, Action: [ lambda:InvokeFunction ], Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-api' }
+
+  ApiFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Code: backend/
+      MemorySize: 1024
+      Timeout: 300
+      Role: !GetAtt ApiRole.Arn
+      Environment:
+        Variables:
+          TABLE: !Ref Table
+          ASSETS: !Ref AssetsBucket
+          OWNER_EMAIL: !Ref OwnerEmail
+          SENDER_EMAIL: !Ref SenderEmail
+          SECRET_ID: !Ref AnthropicSecretName
+          MODEL: !Ref Model
+          MODEL_COMPLEX: !Ref ModelComplex
+          USER_POOL_ID: !Ref UserPool
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      ProtocolType: HTTP
+      Target: !GetAtt ApiFn.Arn
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${AWS::StackName}-users'
+      UsernameAttributes: [ email ]
+      AutoVerifiedAttributes: [ email ]
+      Schema:
+        - { Name: email, Required: true, Mutable: true }
+        - { Name: name, Required: true, Mutable: true }
+      Policies:
+        PasswordPolicy: { MinimumLength: 8, RequireNumbers: true, RequireLowercase: true, RequireUppercase: false, RequireSymbols: false }
+      AccountRecoverySetting:
+        RecoveryMechanisms: [ { Name: verified_email, Priority: 1 } ]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true     # no self sign-up: the admin adds users, users set their password via "Forgot password"
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub 'bannaa-${AWS::AccountId}'
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: bannaa-web
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [ code ]
+      AllowedOAuthScopes: [ openid, email, profile, aws.cognito.signin.user.admin ]
+      SupportedIdentityProviders: [ COGNITO ]
+      CallbackURLs: [ !Sub 'https://${Distribution.DomainName}/' ]
+      LogoutURLs: [ !Sub 'https://${Distribution.DomainName}/' ]
+      ExplicitAuthFlows: [ ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_SRP_AUTH ]
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
+
+Outputs:
+  Url: { Value: !Sub 'https://${Distribution.DomainName}/' }
+  DistributionId: { Value: !Ref Distribution }
+  SiteBucket: { Value: !Ref SiteBucket }
+  Table: { Value: !Ref Table }
+  CognitoDomain: { Value: !Sub 'https://bannaa-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com' }
+  ClientId: { Value: !Ref UserPoolClient }
+  UserPoolId: { Value: !Ref UserPool }

@@ -1,0 +1,8 @@
+dev/data.json
+dev/blobs/
+web/config.js
+.packaged.yaml
+.seed.json
+node_modules/
+.DS_Store
+push.bat
