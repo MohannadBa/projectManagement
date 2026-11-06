@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Bannaa edge resources — must be deployed in us-east-1 (CloudFront firewall and HTTPS certificate).
+
+Parameters:
+  DomainName: { Type: String, Default: '', Description: 'Custom domain, e.g. bannaa.alrasiyat.com (empty = none)' }
+  HostedZoneId: { Type: String, Default: '', Description: 'Route 53 hosted zone id of the domain' }
+
+Conditions:
+  HasDomain: !Not [ !Equals [ !Ref DomainName, '' ] ]
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDomain
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions: [ { DomainName: !Ref DomainName, HostedZoneId: !Ref HostedZoneId } ]
+
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${AWS::StackName}-waf'
+      Scope: CLOUDFRONT
+      DefaultAction: { Allow: {} }
+      VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: bannaa-waf }
+      Rules:
+        - Name: rate-limit-api
+          Priority: 0
+          Action: { Block: {} }
+          Statement:
+            RateBasedStatement:
+              Limit: 1500            # requests per 5 minutes per IP to /api
+              AggregateKeyType: IP
+              ScopeDownStatement:
+                ByteMatchStatement: { FieldToMatch: { UriPath: {} }, PositionalConstraint: STARTS_WITH, SearchString: /api/, TextTransformations: [ { Priority: 0, Type: NONE } ] }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: rate-limit-api }
+        - Name: rate-limit-all
+          Priority: 1
+          Action: { Block: {} }
+          Statement: { RateBasedStatement: { Limit: 6000, AggregateKeyType: IP } }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: rate-limit-all }
+        - Name: aws-ip-reputation
+          Priority: 2
+          OverrideAction: { None: {} }
+          Statement: { ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesAmazonIpReputationList } }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: ip-reputation }
+        - Name: aws-common
+          Priority: 3
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              RuleActionOverrides:     # photo uploads and invitation e-mails legitimately send large / HTML bodies
+                - { Name: SizeRestrictions_BODY, ActionToUse: { Count: {} } }
+                - { Name: CrossSiteScripting_BODY, ActionToUse: { Count: {} } }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: common }
+        - Name: aws-known-bad-inputs
+          Priority: 4
+          OverrideAction: { None: {} }
+          Statement: { ManagedRuleGroupStatement: { VendorName: AWS, Name: AWSManagedRulesKnownBadInputsRuleSet } }
+          VisibilityConfig: { SampledRequestsEnabled: true, CloudWatchMetricsEnabled: true, MetricName: bad-inputs }
+
+Outputs:
+  WebAclArn: { Value: !GetAtt WebAcl.Arn }
+  CertificateArn: { Value: !If [ HasDomain, !Ref Certificate, '' ] }

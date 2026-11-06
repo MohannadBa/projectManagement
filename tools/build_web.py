@@ -17,9 +17,17 @@ R = [
   "لا يستطيع إنشاء حساب في المنصة إلا البريد المدعو أو بريد ضمن نطاق الشركة — يُتحقق من ذلك على الخادم."),
  ("الدعوات بالبريد والحسابات الحقيقية تعمل عند فتح المنصة من رابطها على claude.ai مع تسجيل الدخول.", "الدعوات بالبريد والحسابات الحقيقية تعمل بعد تسجيل الدخول."),
  ("حسابات حقيقية: الدعوة بالبريد ← الدخول بحساب claude.ai بنفس البريد ← تفعيل تلقائي بالدور", "حسابات حقيقية: الدعوة بالبريد ← إنشاء حساب بنفس البريد ← تفعيل تلقائي بالدور"),
- ("  t.append(b,sp);d.append(img,t);box.append(d);\n", "  t.append(b,sp);d.append(img,t);box.append(d);\n  if(window.bannaaLogout){const lo=document.createElement('button');lo.className='btn sm';lo.textContent='تسجيل الخروج';lo.style.marginTop='6px';lo.onclick=()=>window.bannaaLogout();box.append(lo)}\n"),
+ ("  t.append(b,sp);d.append(img,t);box.append(d);\n", "  t.append(b,sp);d.append(img,t);box.append(d);\n  if(window.bannaaLogout){const lo=document.createElement('button');lo.className='btn sm';lo.textContent='تسجيل الخروج';lo.style.marginTop='6px';lo.onclick=()=>window.bannaaLogout();const cp=document.createElement('button');cp.className='btn sm';cp.textContent='تغيير كلمة المرور';cp.onclick=()=>window.bannaaChangePassword();const mf=document.createElement('button');mf.className='btn sm';mf.textContent='التحقق الثنائي';mf.onclick=()=>window.bannaaMfa();const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;flex-wrap:wrap';row.append(cp,mf,lo);box.append(row)}\n"),
  ("const link=teamDoc().link||PLATFORM_URL,", "const link=(teamDoc().link&&!/claude\\.ai/.test(teamDoc().link))?teamDoc().link:PLATFORM_URL,"),
- ('<div class="rail-foot">نموذج أولي للعرض', '<div class="rail-foot">منصة بنّاء على AWS · نموذج أولي'),
+ # real system: no demo role switcher, no demo data or sample invoices
+ ('<div class="rail-foot">نموذج أولي للعرض — الأسعار الافتراضية أمثلة، وتُستبدل تلقائياً بأسعار الفواتير المعتمدة.</div>', '<div class="rail-foot">منصة بنّاء · الأسعار تُحدَّث تلقائياً من الفواتير المعتمدة.</div>'),
+ ('function canSwitch(){return !realAccounts()||ACC.me.isOwner}', 'function canSwitch(){return false}'),
+ ("if(ACC.me.isOwner){ACC.via='owner';if(!ROLES[state.role])state.role='pm';return}", "if(ACC.me.isOwner){ACC.via='owner';state.role='pm';return}"),
+ ('<button class="btn" data-act="loadDemo">تحميل البيانات التجريبية</button>', ''),
+ ('ابدأ بإنشاء مشروعك الأول، أو حمّل مشروعين تجريبيين لتجربة المنصة.', 'ابدأ بإنشاء مشروعك الأول.'),
+ ('<p class="ro-note" style="margin:8px 0 0">تجربة بدون رفع: <button class="btn sm" data-act="demoInv">فاتورة مثال</button> <button class="btn sm" data-act="demoDup">فاتورة مكررة برقم مكتوب بشكل مختلف</button></p>', ''),
+ ('القراءة الذكية غير متاحة في هذا العرض — الأمثلة تعمل.', 'القراءة الذكية غير متاحة — تأكد من إعداد مفتاح Anthropic.'),
+ ('<div class="lbl">وضع العرض — التبديل بين الأدوار</div>', '<div class="lbl">الأدوار</div>'),
 ]
 for a, b in R:
     n = src.count(a)
