@@ -431,20 +431,41 @@ export function makeCore({ store: gstore, blobs, auth, mail, startJob, ownerEmai
         content.push({ type: 'image', source: { type: 'base64', media_type: o.ct || 'image/jpeg', data: o.buf.toString('base64') } });
       }
       content.push({ type: 'text', text: j.prompt });
+      // streamed: headers arrive at once, so long drawing reads don't hit fetch's 5-minute header timeout
       const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
+        method: 'POST', signal: AbortSignal.timeout(13.5 * 60e3),
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: j.tier === 'complex' ? modelComplex : model, max_tokens: 8192, system: 'Reply with valid JSON only — no prose, no code fences.', messages: [{ role: 'user', content }] })
+        body: JSON.stringify({ model: j.tier === 'complex' ? modelComplex : model, max_tokens: j.tier === 'complex' ? 16000 : 8192, stream: true, system: 'Reply with valid JSON only — no prose, no code fences.', messages: [{ role: 'user', content }] })
       });
-      const d = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
         const code = res.status === 429 || res.status === 529 ? 'rate_limited' : res.status === 413 ? 'prompt_too_large' : res.status === 401 ? 'sampling_disabled' : 'upstream_error';
+        console.error('anthropic', res.status, d.error && d.error.message);
         await gstore.put('_jobs', j.id, { status: 'error', code, message: (d.error && d.error.message) || String(res.status), uid: j.uid }, ttl); return;
       }
-      const text = (d.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+      let text = '', buf = '', stop = null, err = null;
+      const dec = new TextDecoder();
+      for await (const chunk of res.body) {
+        buf += dec.decode(chunk, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (!line.startsWith('data:')) continue;
+          let ev; try { ev = JSON.parse(line.slice(5)); } catch (e) { continue; }
+          if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') text += ev.delta.text;
+          else if (ev.type === 'message_delta' && ev.delta) stop = ev.delta.stop_reason || stop;
+          else if (ev.type === 'error') err = ev.error || { message: 'stream error' };
+        }
+      }
+      if (err) {
+        console.error('anthropic stream', err);
+        await gstore.put('_jobs', j.id, { status: 'error', code: err.type === 'overloaded_error' ? 'rate_limited' : 'upstream_error', message: String(err.message || ''), uid: j.uid }, ttl); return;
+      }
+      if (stop === 'max_tokens') console.error('anthropic: reply cut at max_tokens', j.tier);
       await gstore.put('_jobs', j.id, { status: 'done', text, uid: j.uid }, ttl);
     } catch (e) {
-      await gstore.put('_jobs', j.id, { status: 'error', code: 'upstream_error', message: String(e.message || e), uid: j.uid }, ttl);
+      console.error('job', j.id, e);
+      await gstore.put('_jobs', j.id, { status: 'error', code: e && e.name === 'TimeoutError' ? 'timeout' : 'upstream_error', message: String(e.message || e), uid: j.uid }, ttl);
     }
   }
 

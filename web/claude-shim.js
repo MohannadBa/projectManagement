@@ -379,7 +379,7 @@
       const d = await api('/ai?job=' + job);
       if (d.status === 'done') { if (opts.onText) try { opts.onText({ text: d.text, delta: d.text }); } catch (e) {} return { text: d.text, truncated: false }; }
       if (d.status === 'error') throw { code: d.code || 'upstream_error', message: d.message || '' };
-      if (Date.now() - t0 > 330000) throw { code: 'timeout', message: 'timeout' };
+      if (Date.now() - t0 > 900000) throw { code: 'timeout', message: 'timeout' };
     }
   }
   const sample = Object.freeze(Object.assign((i, o) => run(i, o), {

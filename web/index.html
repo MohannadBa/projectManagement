@@ -556,8 +556,8 @@ const AIERR={not_granted:'لم تُمنح الصفحة إذن استخدام Cla
   sampling_disabled:'Claude غير متاح لهذا الحساب.',rate_limited:'تم بلوغ حد الاستخدام مؤقتاً — حاول بعد قليل.',
   image_rejected:'تعذّر قراءة الصورة — جرّب صورة أوضح بصيغة JPG أو PNG.',invalid_json:'لم ترجع القراءة بنتيجة مفهومة — حاول مرة أخرى.',
   refused:'تعذّرت قراءة هذا الملف.',session_expired:'انتهت الجلسة — سجّل الدخول من جديد.',prompt_too_large:'الملف كبير جداً — ارفع صفحات أقل.',
-  empty_completion:'لم ترجع القراءة بأي نتيجة — جرّب صورة أوضح.',images_unavailable:'إرسال الصور غير متاح في هذا العرض.'};
-function aiErr(e){const c=e&&e.code;if(c==='not_granted'||c==='sampling_disabled'||c==='images_unavailable')AI.denied=true;return AIERR[c]||'حدث خطأ مؤقت أثناء القراءة — حاول مرة أخرى.'}
+  empty_completion:'لم ترجع القراءة بأي نتيجة — جرّب صورة أوضح.',images_unavailable:'إرسال الصور غير متاح في هذا العرض.',timeout:'استغرقت القراءة وقتاً طويلاً — ارفع صفحات أقل أو صوراً أوضح ثم حاول مرة أخرى.'};
+function aiErr(e){const c=e&&e.code;if(c==='not_granted'||c==='sampling_disabled'||c==='images_unavailable')AI.denied=true;return AIERR[c]||'حدث خطأ مؤقت أثناء القراءة — حاول مرة أخرى.'+(e&&e.message&&c==='upstream_error'?` (${String(e.message).slice(0,140)})`:'')}
 const CONF={high:'ثقة عالية',medium:'ثقة متوسطة',low:'ثقة منخفضة'};
 
 let pdfjsP=null;

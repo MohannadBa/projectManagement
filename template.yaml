@@ -168,6 +168,14 @@ Resources:
               - { Effect: Allow, Action: [ execute-api:ManageConnections ], Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*' }
               - { Effect: Allow, Action: [ lambda:InvokeFunction ], Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-api' }
 
+  # AI jobs run asynchronously; don't let AWS silently re-run a failed or slow read (it would bill twice)
+  ApiFnInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref ApiFn
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+
   ApiFn:
     Type: AWS::Lambda::Function
     Properties:
@@ -176,7 +184,7 @@ Resources:
       Handler: index.handler
       Code: backend/
       MemorySize: 1024
-      Timeout: 300
+      Timeout: 900
       Role: !GetAtt ApiRole.Arn
       Environment:
         Variables:
