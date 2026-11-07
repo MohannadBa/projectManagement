@@ -419,6 +419,15 @@ export function makeCore({ store: gstore, blobs, auth, mail, startJob, ownerEmai
     }
   }
 
+  const modelFix = {};
+  async function pickModel(H, want) {
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/models?limit=100', { headers: H }); if (!r.ok) return null;
+      const ids = ((await r.json()).data || []).map(x => x.id);   // newest first
+      const fam = ['opus', 'sonnet', 'haiku'].find(f => String(want).includes(f)) || 'sonnet';
+      return ids.find(i => i.includes(fam)) || ids.find(i => i.includes('sonnet')) || ids[0] || null;
+    } catch (e) { return null; }
+  }
   async function runJob(j, { getKey, model, modelComplex }) {
     const ttl = Math.floor(Date.now() / 1000) + 86400;
     try {
@@ -432,11 +441,21 @@ export function makeCore({ store: gstore, blobs, auth, mail, startJob, ownerEmai
       }
       content.push({ type: 'text', text: j.prompt });
       // streamed: headers arrive at once, so long drawing reads don't hit fetch's 5-minute header timeout
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST', signal: AbortSignal.timeout(13.5 * 60e3),
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: j.tier === 'complex' ? modelComplex : model, max_tokens: j.tier === 'complex' ? 16000 : 8192, stream: true, system: 'Reply with valid JSON only — no prose, no code fences.', messages: [{ role: 'user', content }] })
+      const H = { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
+      const call = m => fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', signal: AbortSignal.timeout(13.5 * 60e3), headers: H,
+        body: JSON.stringify({ model: m, max_tokens: j.tier === 'complex' ? 16000 : 8192, stream: true, system: 'Reply with valid JSON only — no prose, no code fences.', messages: [{ role: 'user', content }] })
       });
+      const want = j.tier === 'complex' ? modelComplex : model;
+      let res = await call(modelFix[want] || want);
+      // a retired or unavailable model id: pick the newest model of the same family this key can use, remember it, retry once
+      if (res.status === 404 || res.status === 400) {
+        const d0 = await res.clone().json().catch(() => ({}));
+        if (/^model:/i.test((d0.error && d0.error.message) || '') || (d0.error && d0.error.type) === 'not_found_error') {
+          const alt = await pickModel(H, want);
+          if (alt) { console.error('model', want, 'unavailable — using', alt); modelFix[want] = alt; res = await call(alt); }
+        }
+      }
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         const code = res.status === 429 || res.status === 529 ? 'rate_limited' : res.status === 413 ? 'prompt_too_large' : res.status === 401 ? 'sampling_disabled' : 'upstream_error';

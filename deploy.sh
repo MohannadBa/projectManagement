@@ -74,7 +74,7 @@ PY
   aws cloudformation deploy --template-file .packaged.yaml --stack-name "$STACK" --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset \
     --parameter-overrides OwnerEmail="$OWNER_EMAIL" SenderEmail="$SENDER_EMAIL" AnthropicSecretName=bannaa/anthropic \
       DomainName="$DOMAIN" HostedZoneId="$ZONE" CertificateArn="$CERT" WebAclArn="$WAF" OriginSecret="$ORIGIN_SECRET" \
-      CfKeyGroupId="$KG" CfPublicKeyId="$PUB" CfKeySecretName=bannaa/cf-private-key
+      CfKeyGroupId="$KG" CfPublicKeyId="$PUB" CfKeySecretName=bannaa/cf-private-key ${MODEL:+Model="$MODEL"} ${MODEL_COMPLEX:+ModelComplex="$MODEL_COMPLEX"}
 
   aws sesv2 get-email-identity --email-identity "$SENDER_EMAIL" >/dev/null 2>&1 || {
     aws sesv2 create-email-identity --email-identity "$SENDER_EMAIL" >/dev/null
